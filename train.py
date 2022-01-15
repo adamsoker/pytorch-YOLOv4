@@ -24,6 +24,8 @@ from models import Yolov4
 import argparse
 from easydict import EasyDict as edict
 from torch.nn import functional as F
+import time
+
 
 import numpy as np
 
@@ -301,6 +303,19 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
     # scheduler = CosineAnnealingWarmRestarts(optimizer, 0.001, 1e-6, 20)
 
     model.train()
+    Train_epochs_loss = []
+    Train_epochs_loss_xy = []
+    Train_epochs_loss_wh = []
+    Train_epochs_loss_obj = []
+    Train_epochs_loss_cls = []
+    Train_epochs_loss_l2 = []
+
+    Val_epochs_loss = []
+    Val_epochs_loss_xy = []
+    Val_epochs_loss_wh = []
+    Val_epochs_loss_obj = []
+    Val_epochs_loss_cls = []
+    Val_epochs_loss_l2 = []
     for epoch in range(epochs):
         #model.train()
         epoch_loss = 0
@@ -318,6 +333,9 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
 
                 bboxes_pred = model(images)
                 loss, loss_xy, loss_wh, loss_obj, loss_cls, loss_l2 = criterion(bboxes_pred, bboxes)
+
+
+
                 # loss = loss / config.subdivisions
                 loss.backward()
 
@@ -363,8 +381,83 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
                 torch.save(model.state_dict(), os.path.join(config.checkpoints, f'Yolov4_epoch{epoch + 1}.pth'))
                 logging.info(f'Checkpoint {epoch + 1} saved !')
 
-    writer.close()
+        batch_loss = 0
+        batch_loss_xy = 0
+        batch_loss_wh = 0
+        batch_loss_obj = 0
+        batch_loss_cls = 0
+        batch_loss_l2 = 0
 
+        with torch.no_grad():
+            total_images = 0
+            for i, batch in enumerate(train_loader):
+                total_images += batch_size
+                images = batch[0]
+                bboxes = batch[1]
+
+                images = images.to(device=device, dtype=torch.float32)
+                bboxes = bboxes.to(device=device)
+
+                bboxes_pred = model(images)
+                batch_loss, batch_loss_xy, batch_loss_wh, batch_loss_obj, batch_loss_cls, batch_loss_l2 = criterion(bboxes_pred, bboxes)
+
+                batch_loss      += batch_loss
+                batch_loss_xy   += batch_loss_xy
+                batch_loss_wh   += batch_loss_wh
+                batch_loss_obj  += batch_loss_obj
+                batch_loss_cls  += batch_loss_cls
+                batch_loss_l2   += batch_loss_l2
+
+
+        Train_epochs_loss.append(batch_loss/total_images)
+        Train_epochs_loss_xy.append(batch_loss_xy/total_images)
+        Train_epochs_loss_wh.append(batch_loss_wh/total_images)
+        Train_epochs_loss_obj.append(batch_loss_obj/total_images)
+        Train_epochs_loss_cls.append(batch_loss_cls/total_images)
+        Train_epochs_loss_l2.append(batch_loss_l2/total_images)
+
+        batch_loss = 0
+        batch_loss_xy = 0
+        batch_loss_wh = 0
+        batch_loss_obj = 0
+        batch_loss_cls = 0
+        batch_loss_l2 = 0
+
+        total_images = 0
+        for i, batch in enumerate(val_loader):
+            total_images += batch_size
+            images = batch[0]
+            bboxes = batch[1]
+
+            images = images.to(device=device, dtype=torch.float32)
+            bboxes = bboxes.to(device=device)
+
+            bboxes_pred = model(images)
+            batch_loss, batch_loss_xy, batch_loss_wh, batch_loss_obj, batch_loss_cls, batch_loss_l2 = criterion(bboxes_pred, bboxes)
+
+            batch_loss += batch_loss
+            batch_loss_xy += batch_loss_xy
+            batch_loss_wh += batch_loss_wh
+            batch_loss_obj += batch_loss_obj
+            batch_loss_cls += batch_loss_cls
+            batch_loss_l2 += batch_loss_l2
+
+        Val_epochs_loss.append(batch_loss / total_images)
+        Val_epochs_loss_xy.append(batch_loss_xy / total_images)
+        Val_epochs_loss_wh.append(batch_loss_wh / total_images)
+        Val_epochs_loss_obj.append(batch_loss_obj / total_images)
+        Val_epochs_loss_cls.append(batch_loss_cls / total_images)
+        Val_epochs_loss_l2.append(batch_loss_l2 / total_images)
+
+        log = "Epoch: {} | Total train Loss: {:.4f} | Total valid Loss: {:.3f}%".format(epoch,Train_epochs_loss(-1),Val_epochs_loss(-1))
+        epoch_time = time.time() - epoch_time
+        log += "Epoch Time: {:.2f} secs".format(epoch_time)
+        print(log)
+
+    writer.close()
+    return Train_epochs_loss, Train_epochs_loss_xy, Train_epochs_loss_wh, rain_epochs_loss_obj,\
+           Train_epochs_loss_cls, Train_epochs_loss_l2, Val_epochs_loss, Val_epochs_loss_xy, Val_epochs_loss_wh, \
+           Val_epochs_loss_obj, Val_epochs_loss_cls, Val_epochs_loss_l2
 
 def get_args(**kwargs):
     cfg = kwargs
