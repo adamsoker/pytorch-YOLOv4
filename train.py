@@ -26,7 +26,6 @@ from easydict import EasyDict as edict
 from torch.nn import functional as F
 import time
 
-
 import numpy as np
 
 
@@ -256,7 +255,7 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
                               num_workers=8, pin_memory=True, drop_last=True, collate_fn=collate)
 
     val_loader = DataLoader(val_dataset, batch_size=config.batch // config.subdivisions, shuffle=True, num_workers=8,
-                            pin_memory=True, drop_last=True)
+                            pin_memory=True, drop_last=True, collate_fn=collate)
 
     writer = SummaryWriter(log_dir=config.TRAIN_TENSORBOARD_DIR,
                            filename_suffix=f'OPT_{config.TRAIN_OPTIMIZER}_LR_{config.learning_rate}_BS_{config.batch}_Sub_{config.subdivisions}_Size_{config.width}',
@@ -298,31 +297,25 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
     optimizer = optim.Adam(model.parameters(), lr=config.learning_rate / config.batch, betas=(0.9, 0.999), eps=1e-08)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, burnin_schedule)
 
-    criterion = Yolo_loss(device=device, batch=config.batch // config.subdivisions,n_classes=config.classes)
+    criterion = Yolo_loss(device=device, batch=config.batch // config.subdivisions, n_classes=config.classes)
     # scheduler = ReduceLROnPlateau(optimizer, mode='max', verbose=True, patience=6, min_lr=1e-7)
     # scheduler = CosineAnnealingWarmRestarts(optimizer, 0.001, 1e-6, 20)
 
     model.train()
     Train_epochs_loss = []
-    Train_epochs_loss_xy = []
-    Train_epochs_loss_wh = []
-    Train_epochs_loss_obj = []
-    Train_epochs_loss_cls = []
-    Train_epochs_loss_l2 = []
-
     Val_epochs_loss = []
-    Val_epochs_loss_xy = []
-    Val_epochs_loss_wh = []
-    Val_epochs_loss_obj = []
-    Val_epochs_loss_cls = []
-    Val_epochs_loss_l2 = []
+
     for epoch in range(epochs):
-        #model.train()
+        # model.train()
         epoch_loss = 0
         epoch_step = 0
+        total_loss = 0
+        total_images = 0
 
+        epoch_time = time.time()
         with tqdm(total=n_train, desc=f'Epoch {epoch + 1}/{epochs}', unit='img', ncols=50) as pbar:
             for i, batch in enumerate(train_loader):
+
                 global_step += 1
                 epoch_step += 1
                 images = batch[0]
@@ -334,14 +327,14 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
                 bboxes_pred = model(images)
                 loss, loss_xy, loss_wh, loss_obj, loss_cls, loss_l2 = criterion(bboxes_pred, bboxes)
 
-
-
+                total_images += images.size(0)
+                total_loss += loss
                 # loss = loss / config.subdivisions
                 loss.backward()
 
                 epoch_loss += loss.item()
 
-                if global_step  % config.subdivisions == 0:
+                if global_step % config.subdivisions == 0:
                     optimizer.step()
                     scheduler.step()
                     model.zero_grad()
@@ -364,11 +357,11 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
                                         })
                     '''
                     logging.info('Train step_{}: loss : {},loss xy : {},loss wh : {},'
-                                  'loss obj : {}，loss cls : {},loss l2 : {},lr : {}'
-                                  .format(global_step, loss.item(), loss_xy.item(),
-                                          loss_wh.item(), loss_obj.item(),
-                                          loss_cls.item(), loss_l2.item(),
-                                          scheduler.get_lr()[0] * config.batch))
+                                 'loss obj : {}，loss cls : {},loss l2 : {},lr : {}'
+                                 .format(global_step, loss.item(), loss_xy.item(),
+                                         loss_wh.item(), loss_obj.item(),
+                                         loss_cls.item(), loss_l2.item(),
+                                         scheduler.get_lr()[0] * config.batch))
 
                 pbar.update(images.shape[0])
 
@@ -381,17 +374,14 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
                 torch.save(model.state_dict(), os.path.join(config.checkpoints, f'Yolov4_epoch{epoch + 1}.pth'))
                 logging.info(f'Checkpoint {epoch + 1} saved !')
 
-        batch_loss = 0
-        batch_loss_xy = 0
-        batch_loss_wh = 0
-        batch_loss_obj = 0
-        batch_loss_cls = 0
-        batch_loss_l2 = 0
+        print('>>>>>>>>>>>>>>>>>', total_images)
+        total_loss /= total_images
+        Train_epochs_loss.append(total_loss)
+        total_images = 0
 
+        total_loss_valid = 0
         with torch.no_grad():
-            total_images = 0
-            for i, batch in enumerate(train_loader):
-                total_images += batch_size
+            for i, batch in enumerate(val_loader):
                 images = batch[0]
                 bboxes = batch[1]
 
@@ -399,72 +389,34 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
                 bboxes = bboxes.to(device=device)
 
                 bboxes_pred = model(images)
-                batch_loss, batch_loss_xy, batch_loss_wh, batch_loss_obj, batch_loss_cls, batch_loss_l2 = criterion(bboxes_pred, bboxes)
+                loss, loss_xy, loss_wh, loss_obj, loss_cls, loss_l2 = criterion(bboxes_pred, bboxes)
 
-                batch_loss      += batch_loss
-                batch_loss_xy   += batch_loss_xy
-                batch_loss_wh   += batch_loss_wh
-                batch_loss_obj  += batch_loss_obj
-                batch_loss_cls  += batch_loss_cls
-                batch_loss_l2   += batch_loss_l2
+                total_images += images.size(0)
+                total_loss_valid += loss
 
+        total_loss_valid /= total_images
+        Val_epochs_loss.append(total_loss_valid)
 
-        Train_epochs_loss.append(batch_loss/total_images)
-        Train_epochs_loss_xy.append(batch_loss_xy/total_images)
-        Train_epochs_loss_wh.append(batch_loss_wh/total_images)
-        Train_epochs_loss_obj.append(batch_loss_obj/total_images)
-        Train_epochs_loss_cls.append(batch_loss_cls/total_images)
-        Train_epochs_loss_l2.append(batch_loss_l2/total_images)
-
-        batch_loss = 0
-        batch_loss_xy = 0
-        batch_loss_wh = 0
-        batch_loss_obj = 0
-        batch_loss_cls = 0
-        batch_loss_l2 = 0
-
-        total_images = 0
-        for i, batch in enumerate(val_loader):
-            total_images += batch_size
-            images = batch[0]
-            bboxes = batch[1]
-
-            images = images.to(device=device, dtype=torch.float32)
-            bboxes = bboxes.to(device=device)
-
-            bboxes_pred = model(images)
-            batch_loss, batch_loss_xy, batch_loss_wh, batch_loss_obj, batch_loss_cls, batch_loss_l2 = criterion(bboxes_pred, bboxes)
-
-            batch_loss += batch_loss
-            batch_loss_xy += batch_loss_xy
-            batch_loss_wh += batch_loss_wh
-            batch_loss_obj += batch_loss_obj
-            batch_loss_cls += batch_loss_cls
-            batch_loss_l2 += batch_loss_l2
-
-        Val_epochs_loss.append(batch_loss / total_images)
-        Val_epochs_loss_xy.append(batch_loss_xy / total_images)
-        Val_epochs_loss_wh.append(batch_loss_wh / total_images)
-        Val_epochs_loss_obj.append(batch_loss_obj / total_images)
-        Val_epochs_loss_cls.append(batch_loss_cls / total_images)
-        Val_epochs_loss_l2.append(batch_loss_l2 / total_images)
-
-        log = "Epoch: {} | Total train Loss: {:.4f} | Total valid Loss: {:.3f}%".format(epoch,Train_epochs_loss(-1),Val_epochs_loss(-1))
+        log = "Epoch: {} | Total train Loss: {:.4f} | Total valid Loss: {:.3f}%".format(epoch, total_loss,
+                                                                                        total_loss_valid)
         epoch_time = time.time() - epoch_time
         log += "Epoch Time: {:.2f} secs".format(epoch_time)
         print(log)
 
     writer.close()
-    return Train_epochs_loss, Train_epochs_loss_xy, Train_epochs_loss_wh, rain_epochs_loss_obj,\
+    return Train_epochs_loss, Train_epochs_loss_xy, Train_epochs_loss_wh, rain_epochs_loss_obj, \
            Train_epochs_loss_cls, Train_epochs_loss_l2, Val_epochs_loss, Val_epochs_loss_xy, Val_epochs_loss_wh, \
            Val_epochs_loss_obj, Val_epochs_loss_cls, Val_epochs_loss_l2
+
 
 def get_args(**kwargs):
     cfg = kwargs
     parser = argparse.ArgumentParser(description='Train the Model on images and target masks',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-b', '--batch-size', metavar='B', type=int, nargs='?', default=2,help='Batch size', dest='batch')
-    parser.add_argument('-s', '--subdivisions', metavar='S', type=int, nargs='?', default=1,help='subdivisions', dest='subdivisions')
+    parser.add_argument('-b', '--batch-size', metavar='B', type=int, nargs='?', default=2, help='Batch size',
+                        dest='batch')
+    parser.add_argument('-s', '--subdivisions', metavar='S', type=int, nargs='?', default=1, help='subdivisions',
+                        dest='subdivisions')
     parser.add_argument('-l', '--learning-rate', metavar='LR', type=float, nargs='?', default=0.001,
                         help='Learning rate', dest='learning_rate')
     parser.add_argument('-f', '--load', dest='load', type=str, default=None,
@@ -473,10 +425,10 @@ def get_args(**kwargs):
                         help='GPU', dest='gpu')
     parser.add_argument('-dir', '--data-dir', type=str, default=None,
                         help='dataset dir', dest='dataset_dir')
-    parser.add_argument('-pretrained',type=str,default=None,help='pretrained yolov4.conv.137')
-    parser.add_argument('-classes',type=int,default=80,help='dataset classes')
-    parser.add_argument('-train_label_path',dest='train_label',type=str,default='train.txt',help="train label path")
-    parser.add_argument('-epochs',dest='TRAIN_EPOCHS',type=int,default=10,help="number of training epochs")
+    parser.add_argument('-pretrained', type=str, default=None, help='pretrained yolov4.conv.137')
+    parser.add_argument('-classes', type=int, default=80, help='dataset classes')
+    parser.add_argument('-train_label_path', dest='train_label', type=str, default='train.txt', help="train label path")
+    parser.add_argument('-epochs', dest='TRAIN_EPOCHS', type=int, default=10, help="number of training epochs")
     args = vars(parser.parse_args())
 
     for k in args.keys():
@@ -527,7 +479,7 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Using device {device}')
 
-    model = Yolov4(cfg.pretrained,n_classes=cfg.classes)
+    model = Yolov4(cfg.pretrained, n_classes=cfg.classes)
 
     if torch.cuda.device_count() > 1:
         model = torch.nn.DataParallel(model)
