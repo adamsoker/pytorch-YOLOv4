@@ -363,7 +363,7 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
                 #                           loss_cls.item(), loss_l2.item(),
                 #                           scheduler.get_lr()[0] * config.batch))
                 #
-                # pbar.update(images.shape[0])
+                pbar.update(images.shape[0])
 
         if save_cp:
             try:
