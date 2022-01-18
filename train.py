@@ -402,6 +402,17 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
         log += "Epoch Time: {:.2f} secs".format(epoch_time)
         print(log)
 
+
+
+        try:
+            Train_epochs_loss_txt = '\n.'.join(Train_epochs_loss)
+            Val_epochs_loss_txt = '\n.'.join(Val_epochs_loss)
+            with open('Train_loss.txt','w') as f:
+                f.write(Train_epochs_loss_txt)
+            with open('Valid_loss.txt', 'w') as f:
+                f.write(Val_epochs_loss_txt)
+        except:
+            print('save result failed')
     writer.close()
     return Train_epochs_loss, Val_epochs_loss
 
