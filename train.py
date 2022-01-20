@@ -313,7 +313,7 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
         total_images = 0
 
         epoch_time = time.time()
-        with tqdm(total=n_train, desc=f'Epoch {epoch + 1}/{epochs}', unit='img', ncols=50) as pbar:
+        with tqdm(total=n_train, desc=f'TRAIN: Epoch {epoch + 1}/{epochs}', unit='img', ncols=50) as pbar:
             for i, batch in enumerate(train_loader):
 
                 global_step += 1
@@ -375,44 +375,47 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
             logging.info(f'Checkpoint {epoch + 1} saved !')
 
         total_loss /= total_images
-        Train_epochs_loss.append(total_loss)
+        Train_epochs_loss.append(str(total_loss.item()))
         total_images = 0
 
         total_loss_valid = 0
 
         with torch.no_grad():
-            for i, batch in enumerate(val_loader):
-                images = batch[0]
-                bboxes = batch[1]
+            with tqdm(total=n_val, desc=f'VAL: Epoch {epoch + 1}/{epochs}', unit='img', ncols=50) as pbar:
+              for i, batch in enumerate(val_loader):
+                  images = batch[0]
+                  bboxes = batch[1]
 
-                images = images.to(device=device, dtype=torch.float32)
-                bboxes = bboxes.to(device=device)
+                  images = images.to(device=device, dtype=torch.float32)
+                  bboxes = bboxes.to(device=device)
 
-                bboxes_pred = model(images)
-                loss, loss_xy, loss_wh, loss_obj, loss_cls, loss_l2 = criterion(bboxes_pred, bboxes)
+                  bboxes_pred = model(images)
+                  loss, loss_xy, loss_wh, loss_obj, loss_cls, loss_l2 = criterion(bboxes_pred, bboxes)
 
-                total_images += images.size(0)
-                total_loss_valid += loss
+                  total_images += images.size(0)
+                  total_loss_valid += loss
+
+                  pbar.update(images.shape[0])
 
         total_loss_valid /= total_images
-        Val_epochs_loss.append(total_loss_valid)
-        log = "Epoch: {} | Total train Loss: {:.4f} | Total valid Loss: {:.3f}%".format(epoch, total_loss,
+        Val_epochs_loss.append(str(total_loss_valid.item()))
+        log = "Epoch: {} | Total train Loss: {:.4f} | Total valid Loss: {:.3f}".format(epoch+1, total_loss,
                                                                                         total_loss_valid)
         epoch_time = time.time() - epoch_time
-        log += "Epoch Time: {:.2f} secs".format(epoch_time)
+        log += "| Epoch Time: {:.2f} secs".format(epoch_time)
         print(log)
 
 
 
         try:
-            Train_epochs_loss_txt = '\n.'.join(Train_epochs_loss)
-            Val_epochs_loss_txt = '\n.'.join(Val_epochs_loss)
-            with open('Train_loss.txt','w') as f:
-                f.write(Train_epochs_loss_txt)
-            with open('Valid_loss.txt', 'w') as f:
-                f.write(Val_epochs_loss_txt)
+          Train_epochs_loss_txt = "\n".join(Train_epochs_loss)
+          Val_epochs_loss_txt = "\n".join(Val_epochs_loss)
+          with open('Train_loss.txt','w') as f:
+              f.write(Train_epochs_loss_txt)
+          with open('Valid_loss.txt', 'w') as f:
+              f.write(Val_epochs_loss_txt)
         except:
-            print('save result failed')
+          print('save result failed')
     writer.close()
     return Train_epochs_loss, Val_epochs_loss
 
